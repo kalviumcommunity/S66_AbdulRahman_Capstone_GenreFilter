@@ -197,16 +197,40 @@ app.get('/spotify/artist-genres-lastfm', async (req, res) => {
     return res.status(400).json({ error: 'Invalid artists format' });
   }
 
+  // Define main genres and mapping (should match frontend)
+  const MAIN_GENRES = [
+    'pop', 'rock', 'hip hop', 'r&b', 'soul', 'jazz', 'blues', 'country', 'folk',
+    'electronic', 'dance', 'indie', 'alternative', 'metal', 'punk', 'reggae',
+    'classical', 'funk', 'disco', 'rap', 'latin', 'k-pop', 'world'
+  ];
+  const GENRE_MAPPING = {
+    'indie pop': 'pop', 'pop rock': 'pop', 'electropop': 'pop', 'synthpop': 'pop', 'art pop': 'pop',
+    'folk pop': 'pop', 'dream pop': 'pop', 'bedroom pop': 'pop', 'hyperpop': 'pop',
+    'indie rock': 'rock', 'alternative rock': 'rock', 'psychedelic rock': 'rock', 'post-punk': 'rock',
+    'grunge': 'rock', 'shoegaze': 'rock', 'underground hip hop': 'hip hop', 'lo-fi hip hop': 'hip hop',
+    'alternative hip hop': 'hip hop', 'chillhop': 'hip hop', 'cloud rap': 'rap', 'gangsta rap': 'rap',
+    'trap': 'rap', 'boom bap': 'rap', 'mumble rap': 'rap', 'drill': 'rap', 'neo soul': 'soul',
+    'indie r&b': 'r&b', 'alt r&b': 'r&b', 'chill r&b': 'r&b', 'contemporary r&b': 'r&b',
+    'smooth jazz': 'jazz', 'fusion jazz': 'jazz', 'bluegrass': 'country', 'alt-country': 'country',
+    'indie folk': 'folk', 'folk rock': 'folk', 'techno': 'electronic', 'house': 'electronic',
+    'trance': 'electronic', 'dubstep': 'electronic', 'drum and bass': 'electronic', 'ambient': 'electronic',
+    'edm': 'electronic', 'future bass': 'electronic', 'synthwave': 'electronic', 'vaporwave': 'electronic',
+    'chillout': 'electronic', 'downtempo': 'electronic', 'trip hop': 'electronic', 'dance pop': 'dance',
+    'disco house': 'dance', 'garage': 'dance', 'ska': 'punk', 'emo': 'punk', 'hardcore punk': 'punk',
+    'death metal': 'metal', 'thrash metal': 'metal', 'black metal': 'metal', 'doom metal': 'metal',
+    'neo-psychedelia': 'alternative', 'experimental pop': 'alternative', 'lo-fi': 'electronic',
+    'latin pop': 'latin', 'reggaeton': 'latin', 'salsa': 'latin', 'bachata': 'latin', 'cumbia': 'latin',
+    'tropical': 'latin', 'korean pop': 'k-pop', 'j-pop': 'world', 'afrobeats': 'world', 'bollywood': 'world',
+    'bhangra': 'world', 'flamenco': 'world', 'samba': 'world', 'afrobeat': 'world'
+  };
+
   console.log('LASTFM_API_KEY loaded:', LASTFM_API_KEY ? 'Yes' : 'No');
   try {
     const lastFmGenres = [];
     const batchSize = artistList.length > 20 ? 3 : 5;
-    console.log(`Using batch size of ${batchSize} for ${artistList.length} artists`);
     for (let i = 0; i < artistList.length; i += batchSize) {
       const batch = artistList.slice(i, i + batchSize);
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} with ${batch.length} artists`);
       const batchPromises = batch.map(async ({ artistId, name }, index) => {
-        console.log(`Processing artist ${name} (${artistId}) at index ${i + index}`);
         let attempt = 0;
         const maxAttempts = 3;
         while (attempt < maxAttempts) {
@@ -221,18 +245,15 @@ app.get('/spotify/artist-genres-lastfm', async (req, res) => {
               },
               timeout: 15000
             });
-            const tags = response.data.toptags?.tag?.map(tag => tag.name.toLowerCase()) || [];
-            console.log(`Last.fm genres for ${name} (${artistId}):`, tags, 'Status:', response.status);
-            return { artistId, genres: tags };
+            // Only keep tags that map to a main genre or mapping
+            const tags = (response.data.toptags?.tag || [])
+              .map(tag => tag.name.toLowerCase())
+              .map(genre => GENRE_MAPPING[genre] || (MAIN_GENRES.includes(genre) ? genre : null))
+              .filter(Boolean);
+            return { artistId, genres: Array.from(new Set(tags)) };
           } catch (fetchError) {
-            console.error(`Last.fm fetch attempt ${attempt + 1} failed for ${name} (${artistId}):`, {
-              message: fetchError.message,
-              status: fetchError.response?.status,
-              data: fetchError.response?.data
-            });
             if (fetchError.response?.status === 429 && attempt < maxAttempts - 1) {
               const retryAfter = fetchError.response.headers['retry-after'] || 2;
-              console.log(`Retrying after ${retryAfter} seconds due to 429`);
               await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
               attempt++;
               continue;
@@ -244,12 +265,9 @@ app.get('/spotify/artist-genres-lastfm', async (req, res) => {
       });
       const batchResults = await Promise.all(batchPromises);
       lastFmGenres.push(...batchResults);
-      console.log(`Completed batch ${Math.floor(i / batchSize) + 1}, total genres so far:`, lastFmGenres.length);
     }
-    console.log('Completed lastFmGenres processing:', lastFmGenres);
     res.json(lastFmGenres);
   } catch (overallError) {
-    console.error('Overall error in /spotify/artist-genres-lastfm:', overallError.message, overallError.stack);
     res.status(500).json({ error: 'Failed to fetch Last.fm genres' });
   }
 });
