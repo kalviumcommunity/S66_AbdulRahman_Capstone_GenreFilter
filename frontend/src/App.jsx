@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
-import debounce from 'lodash/debounce';
 import { FixedSizeList } from 'react-window';
 import InfiniteLoader from 'react-window-infinite-loader';
 import { ClipLoader } from 'react-spinners';
 import Select, { createFilter } from 'react-select';
+import DedupBar from './components/DedupBar';
+import GenreSelectBar from './components/GenreSelectBar';
 
 const MAIN_GENRES = [
   'pop', 'rock', 'hip hop', 'r&b', 'soul', 'jazz', 'blues', 'country', 'folk',
@@ -120,7 +121,6 @@ class ErrorBoundary extends React.Component {
 
 function App() {
   const [accessToken, setAccessToken] = useState(null);
-  const [refreshToken, setRefreshToken] = useState(null);
   const [spotifyUserId, setSpotifyUserId] = useState(null);
   const [playlists, setPlaylists] = useState([]);
   const [selectedPlaylist, setSelectedPlaylist] = useState('');
@@ -132,7 +132,6 @@ function App() {
   const [loadingFilter, setLoadingFilter] = useState(false);
   const [error, setError] = useState(null);
   const [trackCount, setTrackCount] = useState(0);
-  const [unknownGenreTracks, setUnknownGenreTracks] = useState([]);
   const [dedupLoading, setDedupLoading] = useState(false);
   const [dedupError, setDedupError] = useState(null);
   const [dedupResult, setDedupResult] = useState(null);
@@ -154,7 +153,6 @@ function App() {
       console.error('No refresh token available');
       setError('Session expired. Please log in again.');
       setAccessToken(null);
-      setRefreshToken(null);
       localStorage.removeItem('spotify_access_token');
       localStorage.removeItem('spotify_refresh_token');
       return null;
@@ -165,7 +163,6 @@ function App() {
       const response = await axios.post('http://localhost:5000/refresh_token', { refresh_token: storedRefreshToken });
       const { access_token, refresh_token, expires_in } = response.data;
       setAccessToken(access_token);
-      setRefreshToken(refresh_token || storedRefreshToken);
       localStorage.setItem('spotify_access_token', access_token);
       localStorage.setItem('spotify_refresh_token', refresh_token || storedRefreshToken);
       console.log('Access token refreshed successfully, expires in:', expires_in);
@@ -174,7 +171,6 @@ function App() {
       console.error('Failed to refresh access token:', err.response?.data || err.message);
       setError('Failed to refresh session. Please log in again.');
       setAccessToken(null);
-      setRefreshToken(null);
       localStorage.removeItem('spotify_access_token');
       localStorage.removeItem('spotify_refresh_token');
       return null;
@@ -214,7 +210,6 @@ function App() {
 
     if (token && refresh) {
       setAccessToken(token);
-      setRefreshToken(refresh);
       localStorage.setItem('spotify_access_token', token);
       localStorage.setItem('spotify_refresh_token', refresh);
       fetchUserPlaylists(token);
@@ -223,7 +218,6 @@ function App() {
       const savedRefresh = localStorage.getItem('spotify_refresh_token');
       if (savedToken && savedRefresh) {
         setAccessToken(savedToken);
-        setRefreshToken(savedRefresh);
         fetchUserPlaylists(savedToken);
       }
     }
@@ -284,7 +278,6 @@ function App() {
     setGenres([]);
     setFilteredSongs([]);
     setSelectedGenres([]);
-    setUnknownGenreTracks([]);
 
     if (!playlistId) return;
 
@@ -390,7 +383,6 @@ function App() {
           hasUnknownGenre: item.genres.length === 0
         }))
         .filter(item => item.hasUnknownGenre);
-      setUnknownGenreTracks(unknownTracks);
 
       if (unknownTracks.length > 0) {
         const artistsToFetch = [...new Set(unknownTracks.flatMap(track => track.artistIds))]
@@ -482,59 +474,6 @@ function App() {
     setSelectedGenres([]);
     setFilteredSongs([]);
   }, []);
-
-  const isItemLoaded = useCallback(index => index < filteredSongs.length && !!filteredSongs[index], [filteredSongs]);
-
-  const loadMoreItems = useCallback((startIndex, stopIndex) => {
-    if (stopIndex >= filteredSongs.length) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, 500));
-  }, [filteredSongs]);
-
-  const SongRow = useCallback(({ index, style }) => {
-    if (!isItemLoaded(index)) {
-      return (
-        <div style={style} className="flex items-center p-4 bg-dark-surface rounded-lg">
-          <ClipLoader color="#1DB954" size={20} />
-          <span className="ml-2 text-gray-400">Loading...</span>
-        </div>
-      );
-    }
-    const item = filteredSongs[index];
-    if (!item?.track?.name || !item?.track?.artists) {
-      return (
-        <div style={style} className="flex items-center p-4 bg-dark-surface rounded-lg">
-          <span className="text-gray-400">Invalid track data</span>
-        </div>
-      );
-    }
-    return (
-      <li style={style} className="flex items-center p-4 bg-dark-surface rounded-lg">
-        <span className="flex-1 truncate">{item.track.name}</span>
-        <span className="text-gray-400 truncate">{item.track.artists.map(a => a.name || 'Unknown Artist').join(', ')}</span>
-      </li>
-    );
-  }, [filteredSongs, isItemLoaded]);
-
-  const memoizedSongList = useMemo(() => (
-    <InfiniteLoader
-      isItemLoaded={isItemLoaded}
-      itemCount={filteredSongs.length || 0}
-      loadMoreItems={loadMoreItems}
-    >
-      {({ onItemsRendered, ref }) => (
-        <FixedSizeList
-          height={Math.min(window.innerHeight - 200, 600)}
-          width="100%"
-          itemCount={filteredSongs.length || 0}
-          itemSize={80}
-          onItemsRendered={onItemsRendered}
-          ref={ref}
-        >
-          {SongRow}
-        </FixedSizeList>
-      )}
-    </InfiniteLoader>
-  ), [filteredSongs, isItemLoaded, loadMoreItems, SongRow]);
 
   const createPlaylist = async () => {
     if (!filteredSongs.length) {
@@ -707,27 +646,12 @@ function App() {
 
           {/* Deduplication Feature: Show when a playlist is selected */}
           {selectedPlaylist && (
-            <div className="mb-8 bg-dark-surface rounded-lg p-6 flex flex-col items-center border border-gray-800 shadow">
-              <h3 className="text-lg font-semibold mb-2">Deduplicate Playlist</h3>
-              <p className="text-gray-400 mb-4 text-center">Click below to remove duplicate songs from this playlist.</p>
-              <button
-                className="bg-spotify-green text-dark-bg font-semibold py-2 px-6 rounded-full hover:bg-green-500 mb-4"
-                onClick={handleDeduplicate}
-                disabled={dedupLoading}
-              >
-                {dedupLoading ? 'Deduplicating...' : 'Deduplicate'}
-              </button>
-              {dedupError && <div className="text-red-400 mb-2">{dedupError}</div>}
-              {dedupResult && (
-                <div className="w-full">
-                  {dedupResult.removed > 0 ? (
-                    <div className="text-green-400">Removed {dedupResult.removed} duplicate songs!</div>
-                  ) : (
-                    <div className="text-green-400">No duplicates found in this playlist!</div>
-                  )}
-                </div>
-              )}
-            </div>
+            <DedupBar
+              dedupLoading={dedupLoading}
+              dedupError={dedupError}
+              dedupResult={dedupResult}
+              handleDeduplicate={handleDeduplicate}
+            />
           )}
 
           {loadingGenres && (
@@ -738,39 +662,16 @@ function App() {
           )}
 
           {genres.length > 0 && !loadingGenres && (
-            <div className="mb-6">
-              <h3 className="text-lg font-semibold mb-2">Filter by Genres</h3>
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => setShowAllGenres(v => !v)}
-                  className={`transition-colors font-semibold rounded-full px-4 py-2 border-2 border-spotify-green focus:outline-none focus:ring-2 focus:ring-spotify-green text-base ${showAllGenres ? 'bg-spotify-green text-black' : 'bg-black text-spotify-green'}`}
-                  style={{ minWidth: 120 }}
-                  aria-pressed={showAllGenres}
-                >
-                  {showAllGenres ? 'All Genres' : 'Main Genres'}
-                </button>
-                <Select
-                  isMulti
-                  options={genreOptions}
-                  value={genreOptions.filter(option => selectedGenres.includes(option.value))}
-                  onChange={handleGenreChange}
-                  styles={customSelectStyles}
-                  placeholder="Select genres..."
-                  className="flex-1"
-                  filterOption={createFilter({ ignoreAccents: false })}
-                  aria-label="Select multiple genres"
-                />
-                {selectedGenres.length > 0 && (
-                  <button
-                    onClick={handleClearGenres}
-                    className="bg-gray-700 text-white py-2 px-4 rounded-lg hover:bg-gray-600"
-                  >
-                    Clear All
-                  </button>
-                )}
-              </div>
-            </div>
+            <GenreSelectBar
+              genres={genres}
+              showAllGenres={showAllGenres}
+              setShowAllGenres={setShowAllGenres}
+              genreOptions={genreOptions}
+              selectedGenres={selectedGenres}
+              handleGenreChange={handleGenreChange}
+              customSelectStyles={customSelectStyles}
+              handleClearGenres={handleClearGenres}
+            />
           )}
 
           {loadingFilter && (
@@ -785,7 +686,16 @@ function App() {
               <h3 className="text-lg font-semibold mb-4">
                 Songs in {selectedGenres.length ? selectedGenres.join(', ') : 'Selected Genres'} ({filteredSongs.length})
               </h3>
-              <ErrorBoundary>{memoizedSongList}</ErrorBoundary>
+              <ErrorBoundary>
+                <ul>
+                  {filteredSongs.map((item, idx) => (
+                    <li key={item.track.id || idx} className="flex items-center p-4 bg-dark-surface rounded-lg hover:bg-gray-700">
+                      <span className="flex-1 truncate">{item.track.name}</span>
+                      <span className="text-gray-400 truncate">{item.track.artists.map(a => a.name || 'Unknown Artist').join(', ')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </ErrorBoundary>
               <div className="flex items-center gap-2 mt-4">
                 <input
                   type="text"
@@ -801,13 +711,11 @@ function App() {
                 >
                   ➕ Create Playlist
                 </button>
-               </div>
+              </div>
             </div>
           )}
         </div>
       )}
-
-      {/* Removed Modal component and all modal-related UI */}
     </div>
   );
 }
