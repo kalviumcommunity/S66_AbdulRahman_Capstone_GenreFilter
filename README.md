@@ -34,4 +34,4 @@ Spopify is a full-stack web application designed to enhance the Spotify experien
 1. Clone the repository:
    ```bash
    git clone https://github.com/kalviumcommunity/S66_AbdulRahman_Capstone_GenreFilter
-   cd backend
+   cd S66_AbdulRahman_Capstone_GenreFilter
