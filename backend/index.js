@@ -110,9 +110,7 @@ app.post('/user/track-genres', async (req, res) => {
   }
   if (genre.length > 40) return res.status(400).json({ error: 'Genre too long' });
   try {
-    const exists = await UserTrackGenre.findOne({ userId, trackId, genre });
-    if (exists) return res.json({ success: true });
-    await UserTrackGenre.create({ userId, trackId, genre });
+    await UserTrackGenre.findOneAndUpdate({ userId, trackId, genre }, {}, { upsert: true });
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to add genre:', err);
