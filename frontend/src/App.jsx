@@ -4,6 +4,7 @@ import { FixedSizeList } from 'react-window';
 import InfiniteLoader from 'react-window-infinite-loader';
 import { ClipLoader } from 'react-spinners';
 import Select, { createFilter } from 'react-select';
+import Modal from 'react-modal';
 import DedupBar from './components/DedupBar';
 import GenreSelectBar from './components/GenreSelectBar';
 
@@ -119,6 +120,8 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+Modal.setAppElement('#root'); // Ensure modal accessibility
+
 function App() {
   const [accessToken, setAccessToken] = useState(null);
   const [spotifyUserId, setSpotifyUserId] = useState(null);
@@ -137,6 +140,16 @@ function App() {
   const [dedupResult, setDedupResult] = useState(null);
   const [showAllGenres, setShowAllGenres] = useState(false); // Toggle for genre dropdown
   const [customPlaylistName, setCustomPlaylistName] = useState(''); // New state for custom playlist name
+
+  // Modal state
+  const [genreModalOpen, setGenreModalOpen] = useState(false);
+  const [modalTrack, setModalTrack] = useState(null);
+  const [modalTrackGenres, setModalTrackGenres] = useState([]);
+  const [modalUserGenres, setModalUserGenres] = useState([]);
+  const [genreAddValue, setGenreAddValue] = useState('');
+  const [genreModalLoading, setGenreModalLoading] = useState(false);
+  const [modalError, setModalError] = useState(null);
+  const [modalSuccess, setModalSuccess] = useState(null);
 
   // Helper: get Spotify userId (fetch on login, or store in state/localStorage)
   useEffect(() => {
@@ -588,6 +601,100 @@ function App() {
     setDedupLoading(false);
   };
 
+  // Helper to fetch user genres for a track
+  const fetchUserGenres = async (trackId) => {
+    if (!spotifyUserId || !trackId) return [];
+    try {
+      const res = await axios.get('http://localhost:5000/user/track-genres', {
+        params: { userId: spotifyUserId, trackId }
+      });
+      return res.data.genres || [];
+    } catch (err) {
+      console.error('Failed to fetch user genres:', err);
+      return [];
+    }
+  };
+
+  // Open genre modal for a track
+  const openGenreModal = async (track) => {
+    setModalTrack(track);
+    setGenreModalOpen(true);
+    setGenreModalLoading(true);
+    setModalError(null);
+    setModalSuccess(null);
+    setModalTrackGenres(track.genres || []);
+    try {
+      const userGenres = await fetchUserGenres(track.track.id);
+      setModalUserGenres(userGenres);
+    } catch (err) {
+      setModalError('Failed to load user genres.');
+    } finally {
+      setGenreModalLoading(false);
+    }
+  };
+
+  // Add a user genre
+  const handleAddUserGenre = async () => {
+    if (!genreAddValue || !spotifyUserId || !modalTrack) return;
+    setGenreModalLoading(true);
+    setModalError(null);
+    setModalSuccess(null);
+    try {
+      await axios.post('http://localhost:5000/user/track-genres', {
+        userId: spotifyUserId,
+        trackId: modalTrack.track.id,
+        genre: genreAddValue
+      });
+      const updatedGenres = await fetchUserGenres(modalTrack.track.id);
+      setModalUserGenres(updatedGenres);
+      setModalSuccess('Genre added successfully!');
+      setGenreAddValue('');
+    } catch (err) {
+      setModalError('Failed to add genre.');
+      console.error('Add genre error:', err);
+    }
+    setGenreModalLoading(false);
+  };
+
+  // Remove a user genre
+  const handleRemoveUserGenre = async (genre) => {
+    if (!spotifyUserId || !modalTrack) return;
+    setGenreModalLoading(true);
+    setModalError(null);
+    setModalSuccess(null);
+    try {
+      await axios.delete('http://localhost:5000/user/track-genres', {
+        data: { userId: spotifyUserId, trackId: modalTrack.track.id, genre }
+      });
+      const updatedGenres = await fetchUserGenres(modalTrack.track.id);
+      setModalUserGenres(updatedGenres);
+      setModalSuccess('Genre removed successfully!');
+    } catch (err) {
+      setModalError('Failed to remove genre.');
+      console.error('Remove genre error:', err);
+    } finally {
+      setGenreModalLoading(false);
+    }
+  };
+
+  // Song row with modal open on click
+  const SongRow = useCallback(({ index, style }) => {
+    const item = filteredSongs[index];
+    if (!item?.track?.name || !item?.track?.artists) {
+      return (
+        <div style={style} className="flex items-center p-4 bg-dark-surface rounded-lg">
+          <span className="text-gray-400">Invalid track data</span>
+        </div>
+      );
+    }
+    return (
+      <li style={style} className="flex items-center p-4 bg-dark-surface rounded-lg hover:bg-gray-700 cursor-pointer" onClick={() => openGenreModal(item)}>
+        <span className="flex-1 truncate">{item.track.name}</span>
+        <span className="text-gray-400 truncate">{item.track.artists.map(a => a.name || 'Unknown Artist').join(', ')}</span>
+      </li>
+    );
+  }, [filteredSongs]);
+
   return (
     <div className="min-h-screen bg-dark-bg text-white p-6 md:p-8 scrollbar-thin">
       <header className="flex items-center justify-between mb-8">
@@ -689,10 +796,7 @@ function App() {
               <ErrorBoundary>
                 <ul>
                   {filteredSongs.map((item, idx) => (
-                    <li key={item.track.id || idx} className="flex items-center p-4 bg-dark-surface rounded-lg hover:bg-gray-700">
-                      <span className="flex-1 truncate">{item.track.name}</span>
-                      <span className="text-gray-400 truncate">{item.track.artists.map(a => a.name || 'Unknown Artist').join(', ')}</span>
-                    </li>
+                    <SongRow key={item.track.id || idx} index={idx} />
                   ))}
                 </ul>
               </ErrorBoundary>
@@ -716,6 +820,93 @@ function App() {
           )}
         </div>
       )}
+
+      {/* Modal UI at the end */}
+      <Modal
+        isOpen={genreModalOpen}
+        onRequestClose={() => {
+          setGenreModalOpen(false);
+          setModalError(null);
+          setModalSuccess(null);
+        }}
+        className="fixed inset-0 flex items-center justify-center z-50"
+        overlayClassName="fixed inset-0 bg-black bg-opacity-60 z-40"
+        ariaHideApp={false}
+      >
+        <div className="bg-dark-surface rounded-lg p-6 w-full max-w-md shadow-lg relative">
+          <button
+            className="absolute top-2 right-2 text-gray-400 hover:text-white"
+            onClick={() => {
+              setGenreModalOpen(false);
+              setModalError(null);
+              setModalSuccess(null);
+            }}
+          >
+            ×
+          </button>
+          <h2 className="text-xl font-bold mb-4">Track Genres</h2>
+          {modalTrack ? (
+            <>
+              <div className="mb-2 font-semibold">
+                {modalTrack.track.name} <span className="text-gray-400">by {modalTrack.track.artists.map(a => a.name).join(', ')}</span>
+              </div>
+              <div className="mb-4">
+                <div className="mb-1 text-sm text-gray-400">Auto-detected genres:</div>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {modalTrackGenres.map((g, i) => (
+                    <span key={g + i} className="bg-gray-700 px-2 py-1 rounded text-xs">{g}</span>
+                  ))}
+                </div>
+                <div className="mb-1 text-sm text-gray-400">Your genres:</div>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {genreModalLoading ? (
+                    <span className="text-gray-400">Loading...</span>
+                  ) : modalUserGenres.length === 0 ? (
+                    <span className="text-gray-500">None</span>
+                  ) : (
+                    modalUserGenres.map(g => (
+                      <span key={g} className="bg-spotify-green text-dark-bg px-2 py-1 rounded text-xs flex items-center">
+                        {g}
+                        <button
+                          className="ml-1 text-xs text-red-500 hover:text-red-700"
+                          onClick={() => handleRemoveUserGenre(g)}
+                          title="Remove genre"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+                {modalError && <div className="text-red-400 text-sm mb-2">{modalError}</div>}
+                {modalSuccess && <div className="text-green-400 text-sm mb-2">{modalSuccess}</div>}
+                <div className="flex items-center gap-2 mt-2">
+                  <select
+                    value={genreAddValue}
+                    onChange={e => setGenreAddValue(e.target.value)}
+                    className="bg-dark-bg text-white rounded px-2 py-1"
+                    disabled={genreModalLoading}
+                  >
+                    <option value="">+ Add genre</option>
+                    {MAIN_GENRES.filter(g => !modalUserGenres.includes(g)).map(g => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAddUserGenre}
+                    className="bg-spotify-green text-dark-bg px-3 py-1 rounded hover:bg-green-500"
+                    disabled={genreModalLoading || !genreAddValue}
+                  >
+                    {genreModalLoading ? <ClipLoader color="#121212" size={12} /> : '+'}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-gray-400">Loading track details...</div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
