@@ -1,131 +1,256 @@
 import express from 'express';
+import cors from 'cors';
 import axios from 'axios';
+import querystring from 'querystring';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import helmet from 'helmet';
+import { ChatCohere } from "@langchain/cohere";
+import { HumanMessage } from "@langchain/core/messages";
+
 dotenv.config();
 
 const app = express();
-app.use(express.json());
+app.use(cors());
+app.use(helmet());
+app.use(express.json({ limit: '100kb' })); // Limit JSON body size
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI).then(() => console.log('Connected to MongoDB'))
-  .catch(err => { console.error('MongoDB connection error:', err); process.exit(1); });
+const {
+  SPOTIFY_CLIENT_ID,
+  SPOTIFY_CLIENT_SECRET,
+  REDIRECT_URI,
+  FRONTEND_URI,
+  MONGODB_URI,
+  LASTFM_API_KEY
+} = process.env;
 
-// Spotify OAuth login endpoint
-app.get('/auth/login', (req, res) => {
-  const scope = 'user-read-private playlist-read-private playlist-modify-public';
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: process.env.SPOTIFY_CLIENT_ID,
-    scope,
-    redirect_uri: process.env.REDIRECT_URI
-  });
-  res.redirect('https://accounts.spotify.com/authorize?' + params.toString());
+mongoose.connect(MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log('MongoDB connected to', MONGODB_URI))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+const chat = new ChatCohere({
+  apiKey: process.env.COHERE_API_KEY,
+  model: "command", // or "command-r" for more creative results
+  temperature: 0.8,
 });
 
-// Spotify OAuth callback endpoint
+const UserTrackGenreSchema = new mongoose.Schema({
+  userId: String,    // Spotify user id
+  trackId: String,   // Spotify track id
+  genre: String      // Genre name
+}, { collection: 'user_track_genres' });
+
+const UserTrackGenre = mongoose.model('UserTrackGenre', UserTrackGenreSchema);
+
+// Backend schema and model for fallback artist genres
+const FallbackArtistSchema = new mongoose.Schema({
+  name: String,
+  genre: [String] // Updated to array to match your document
+}, { collection: 'artists' });
+
+const FallbackArtist = mongoose.model('FallbackArtist', FallbackArtistSchema);
+
+app.get('/auth/login', (req, res) => {
+  const scope = 'user-read-private playlist-read-private playlist-modify-public';
+  res.redirect('https://accounts.spotify.com/authorize?' +
+    querystring.stringify({
+      response_type: 'code',
+      client_id: SPOTIFY_CLIENT_ID,
+      scope: scope,
+      redirect_uri: REDIRECT_URI
+    }));
+});
+
 app.get('/callback', async (req, res) => {
   const code = req.query.code || null;
   try {
-    const response = await axios.post('https://accounts.spotify.com/api/token', new URLSearchParams({
-      code,
-      redirect_uri: process.env.REDIRECT_URI,
+    const response = await axios.post('https://accounts.spotify.com/api/token', querystring.stringify({
+      code: code,
+      redirect_uri: REDIRECT_URI,
       grant_type: 'authorization_code'
     }), {
       headers: {
-        'Authorization': 'Basic ' + Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64'),
+        'Authorization': 'Basic ' + Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64'),
         'Content-Type': 'application/x-www-form-urlencoded'
       }
     });
+
     const { access_token, refresh_token, expires_in } = response.data;
-    res.json({ access_token, refresh_token, expires_in });
+    console.log('New access token issued, expires in:', expires_in);
+    res.redirect(`${FRONTEND_URI}?access_token=${access_token}&refresh_token=${refresh_token}&expires_in=${expires_in}`);
   } catch (error) {
+    console.error('Callback error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to authenticate with Spotify' });
   }
 });
 
-// GET user's playlists from Spotify
+
+app.post('/ai/suggest-playlist-name', async (req, res) => {
+  const { genres } = req.body;
+  if (!genres || !Array.isArray(genres) || genres.length === 0) {
+    return res.status(400).json({ error: 'Genres are required' });
+  }
+  try {
+    const prompt = `Suggest a creative, fun Spotify playlist name for these genres: ${genres.join(', ')}. Only return the name.`;
+    const result = await chat.invoke([new HumanMessage(prompt)]);
+    res.json({ suggestion: result.content.trim() });
+  } catch (err) {
+    console.error('LangChain Cohere playlist name error:', err);
+    res.status(500).json({ error: 'Failed to get suggestion' });
+  }
+});
+
+app.post('/refresh_token', async (req, res) => {
+  const { refresh_token } = req.body;
+  try {
+    console.log('Processing refresh token request');
+    const response = await axios.post('https://accounts.spotify.com/api/token', querystring.stringify({
+      grant_type: 'refresh_token',
+      refresh_token: refresh_token
+    }), {
+      headers: {
+        'Authorization': 'Basic ' + Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64'),
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+
+    console.log('Refresh token successful, new expires_in:', response.data.expires_in);
+    res.json(response.data);
+  } catch (error) {
+    console.error('Refresh token error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to refresh token' });
+  }
+});
+
 app.get('/spotify/user-playlists', async (req, res) => {
   const { access_token } = req.query;
-  if (!access_token) {
-    return res.status(400).json({ error: 'Missing access_token' });
-  }
   try {
     const response = await axios.get('https://api.spotify.com/v1/me/playlists', {
       headers: { 'Authorization': `Bearer ${access_token}` }
     });
     res.json(response.data.items);
   } catch (error) {
+    console.error('User playlists error:', error.response?.data || error.message);
     res.status(error.response?.status || 500).json({ error: 'Failed to fetch playlists' });
   }
 });
 
-// GET artist genres from Spotify
+app.get('/spotify/playlist-tracks', async (req, res) => {
+  const { access_token, playlist_id } = req.query;
+  try {
+    let allTracks = [];
+    let next = `https://api.spotify.com/v1/playlists/${playlist_id}/tracks?limit=100`;
+
+    while (next) {
+      const response = await axios.get(next, {
+        headers: { 'Authorization': `Bearer ${access_token}` }
+      });
+      allTracks = allTracks.concat(response.data.items);
+      next = response.data.next;
+    }
+
+    res.json(allTracks);
+  } catch (error) {
+    console.error('Playlist tracks error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({ error: 'Failed to fetch playlist tracks' });
+  }
+});
+
 app.get('/spotify/artist-genres', async (req, res) => {
   const { access_token, artist_ids } = req.query;
-  if (!access_token || !artist_ids) {
-    return res.status(400).json({ error: 'Missing access_token or artist_ids' });
-  }
   let artistIds;
   try {
     artistIds = JSON.parse(decodeURIComponent(artist_ids)).map(item => item.artistId);
   } catch (error) {
+    console.error('Invalid artist_ids format:', error.message);
     return res.status(400).json({ error: 'Invalid artist_ids format' });
   }
+
   try {
     const response = await axios.get(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, {
       headers: { 'Authorization': `Bearer ${access_token}` }
     });
+
     const genres = response.data.artists.map(artist => ({
       artistId: artist.id,
       genres: artist.genres || []
     }));
+
     res.json(genres);
   } catch (error) {
+    console.error('Artist genres error:', error.response?.data || error.message);
     res.status(error.response?.status || 500).json({ error: 'Failed to fetch artist genres' });
   }
 });
-function sanitizeString(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/[^\w\s\-']/gi, '').trim();
-}
 
-const UserTrackGenreSchema = new mongoose.Schema({
-  userId: String,
-  trackId: String,
-  genre: String
-}, { collection: 'user_track_genres' });
-
-const UserTrackGenre = mongoose.models.UserTrackGenre || mongoose.model('UserTrackGenre', UserTrackGenreSchema);
-
-app.post('/user/track-genres', async (req, res) => {
-  const userId = sanitizeString(req.body.userId);
-  const trackId = sanitizeString(req.body.trackId);
-  const genre = sanitizeString(req.body.genre);
-  if (!userId || !trackId || !genre) {
-    return res.status(400).json({ error: 'Missing userId, trackId, or genre' });
-  }
-  if (genre.length > 40) return res.status(400).json({ error: 'Genre too long' });
+app.get('/spotify/artist-genres-lastfm', async (req, res) => {
+  console.log('Entered /spotify/artist-genres-lastfm with query:', req.query);
+  const { artists } = req.query;
+  let artistList;
   try {
-    await UserTrackGenre.findOneAndUpdate({ userId, trackId, genre }, {}, { upsert: true });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Failed to add genre:', err);
-    res.status(500).json({ error: 'Failed to add genre', details: err.message });
+    artistList = JSON.parse(decodeURIComponent(artists));
+    console.log('Successfully parsed artistList:', artistList.length, 'artists');
+  } catch (parseError) {
+    console.error('Failed to parse artists format:', parseError.message, 'Raw artists data:', artists);
+    return res.status(400).json({ error: 'Invalid artists format' });
   }
-});
 
-app.get('/user/track-genres', async (req, res) => {
-  const userId = sanitizeString(req.query.userId);
-  const trackId = sanitizeString(req.query.trackId);
-  if (!userId || !trackId) {
-    return res.status(400).json({ error: 'Missing userId or trackId' });
-  }
+  console.log('LASTFM_API_KEY loaded:', LASTFM_API_KEY ? 'Yes' : 'No');
   try {
-    const genres = await UserTrackGenre.find({ userId, trackId });
-    res.json({ genres: genres.map(g => g.genre) });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get genres' });
+    const lastFmGenres = [];
+    const batchSize = artistList.length > 20 ? 3 : 5;
+    console.log(`Using batch size of ${batchSize} for ${artistList.length} artists`);
+    for (let i = 0; i < artistList.length; i += batchSize) {
+      const batch = artistList.slice(i, i + batchSize);
+      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} with ${batch.length} artists`);
+      const batchPromises = batch.map(async ({ artistId, name }, index) => {
+        console.log(`Processing artist ${name} (${artistId}) at index ${i + index}`);
+        let attempt = 0;
+        const maxAttempts = 3;
+        while (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 400));
+          try {
+            const response = await axios.get('http://ws.audioscrobbler.com/2.0/', {
+              params: {
+                method: 'artist.getTopTags',
+                artist: encodeURIComponent(name),
+                api_key: LASTFM_API_KEY,
+                format: 'json'
+              },
+              timeout: 15000
+            });
+            const tags = response.data.toptags?.tag?.map(tag => tag.name.toLowerCase()) || [];
+            console.log(`Last.fm genres for ${name} (${artistId}):`, tags, 'Status:', response.status);
+            return { artistId, genres: tags };
+          } catch (fetchError) {
+            console.error(`Last.fm fetch attempt ${attempt + 1} failed for ${name} (${artistId}):`, {
+              message: fetchError.message,
+              status: fetchError.response?.status,
+              data: fetchError.response?.data
+            });
+            if (fetchError.response?.status === 429 && attempt < maxAttempts - 1) {
+              const retryAfter = fetchError.response.headers['retry-after'] || 2;
+              console.log(`Retrying after ${retryAfter} seconds due to 429`);
+              await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+              attempt++;
+              continue;
+            }
+            return { artistId, genres: [] };
+          }
+        }
+        return { artistId, genres: [] };
+      });
+      const batchResults = await Promise.all(batchPromises);
+      lastFmGenres.push(...batchResults);
+      console.log(`Completed batch ${Math.floor(i / batchSize) + 1}, total genres so far:`, lastFmGenres.length);
+    }
+    console.log('Completed lastFmGenres processing:', lastFmGenres);
+    res.json(lastFmGenres);
+  } catch (overallError) {
+    console.error('Overall error in /spotify/artist-genres-lastfm:', overallError.message, overallError.stack);
+    res.status(500).json({ error: 'Failed to fetch Last.fm genres' });
   }
 });
 
@@ -158,7 +283,208 @@ app.post('/spotify/create-playlist', async (req, res) => {
   }
 });
 
+app.post('/spotify/deduplicate-playlist', async (req, res) => {
+  const { access_token, playlist_id } = req.body;
+  if (!access_token || !playlist_id) {
+    return res.status(400).json({ error: 'Missing access_token or playlist_id' });
+  }
+  try {
+    let allTracks = [];
+    let next = `https://api.spotify.com/v1/playlists/${playlist_id}/tracks?limit=100`;
+    while (next) {
+      const response = await axios.get(next, {
+        headers: { 'Authorization': `Bearer ${access_token}` }
+      });
+      allTracks = allTracks.concat(response.data.items);
+      next = response.data.next;
+    }
+    const seen = new Set();
+    const uniqueTracks = [];
+    allTracks.forEach(item => {
+      const key = item.track?.id;
+      if (!key) return;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueTracks.push(item.track.uri);
+      }
+    });
+    const removeTracks = allTracks.map((item, idx) => ({ uri: item.track.uri, positions: [idx] }));
+    if (removeTracks.length > 0) {
+      removeTracks.sort((a, b) => b.positions[0] - a.positions[0]);
+      await axios.request({
+        method: 'DELETE',
+        url: `https://api.spotify.com/v1/playlists/${playlist_id}/tracks`,
+        headers: { 'Authorization': `Bearer ${access_token}` },
+        data: { tracks: removeTracks }
+      });
+    }
+    if (uniqueTracks.length > 0) {
+      for (let i = 0; i < uniqueTracks.length; i += 100) {
+        const batch = uniqueTracks.slice(i, i + 100);
+        await axios.post(`https://api.spotify.com/v1/playlists/${playlist_id}/tracks`, {
+          uris: batch
+        }, {
+          headers: { 'Authorization': `Bearer ${access_token}` }
+        });
+      }
+    }
+    res.json({ removed: allTracks.length - uniqueTracks.length });
+  } catch (error) {
+    console.error('Deduplicate playlist error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to deduplicate playlist' });
+  }
+});
+
+app.post('/spotify/find-duplicates', async (req, res) => {
+  const { access_token, playlist_id } = req.body;
+  if (!access_token || !playlist_id) {
+    return res.status(400).json({ error: 'Missing access_token or playlist_id' });
+  }
+  try {
+    let allTracks = [];
+    let next = `https://api.spotify.com/v1/playlists/${playlist_id}/tracks?limit=100`;
+    while (next) {
+      const response = await axios.get(next, {
+        headers: { 'Authorization': `Bearer ${access_token}` }
+      });
+      allTracks = allTracks.concat(response.data.items);
+      next = response.data.next;
+    }
+    const seen = new Map();
+    const duplicates = [];
+    allTracks.forEach((item, idx) => {
+      const key = item.track?.id;
+      if (!key) return;
+      if (!seen.has(key)) {
+        seen.set(key, [idx]);
+      } else {
+        seen.get(key).push(idx);
+      }
+    });
+    for (const [trackId, positions] of seen.entries()) {
+      if (positions.length > 1) {
+        positions.slice(1).forEach(pos => {
+          const track = allTracks[pos]?.track;
+          if (track) {
+            duplicates.push({
+              uri: track.uri,
+              position: pos,
+              name: track.name,
+              artists: track.artists?.map(a => a.name).join(', ')
+            });
+          }
+        });
+      }
+    }
+    res.json({ duplicates });
+  } catch (error) {
+    console.error('Find duplicates error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to find duplicates' });
+  }
+});
+
+app.post('/spotify/remove-duplicates', async (req, res) => {
+  const { access_token, playlist_id, duplicates } = req.body;
+  if (!access_token || !playlist_id || !Array.isArray(duplicates)) {
+    return res.status(400).json({ error: 'Missing access_token, playlist_id, or duplicates' });
+  }
+  try {
+    const tracksToRemove = duplicates
+      .map(d => ({ uri: d.uri, positions: [d.position] }))
+      .sort((a, b) => b.positions[0] - a.positions[0]);
+    if (tracksToRemove.length === 0) {
+      return res.json({ removed: 0 });
+    }
+    await axios.request({
+      method: 'DELETE',
+      url: `https://api.spotify.com/v1/playlists/${playlist_id}/tracks`,
+      headers: { 'Authorization': `Bearer ${access_token}` },
+      data: { tracks: tracksToRemove }
+    });
+    res.json({ removed: tracksToRemove.length });
+  } catch (error) {
+    console.error('Remove duplicates error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to remove duplicates' });
+  }
+});
+
+const sanitizeString = (str) => {
+  if (typeof str !== 'string') return '';
+  return str.replace(/[^\w\s\-']/gi, '').trim();
+};
+
+app.get('/user/track-genres', async (req, res) => {
+  const userId = sanitizeString(req.query.userId);
+  const trackId = sanitizeString(req.query.trackId);
+  if (!userId || !trackId) {
+    return res.status(400).json({ error: 'Missing userId or trackId' });
+  }
+  try {
+    const genres = await UserTrackGenre.find({ userId, trackId });
+    res.json({ genres: genres.map(g => g.genre) });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get genres' });
+  }
+});
+
+app.post('/user/track-genres', async (req, res) => {
+  const userId = sanitizeString(req.body.userId);
+  const trackId = sanitizeString(req.body.trackId);
+  const genre = sanitizeString(req.body.genre);
+  if (!userId || !trackId || !genre) {
+    return res.status(400).json({ error: 'Missing userId, trackId, or genre' });
+  }
+  if (genre.length > 40) return res.status(400).json({ error: 'Genre too long' });
+  try {
+    const exists = await UserTrackGenre.findOne({ userId, trackId, genre });
+    if (exists) return res.json({ success: true });
+    await UserTrackGenre.create({ userId, trackId, genre });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add genre' });
+  }
+});
+
+app.delete('/user/track-genres', async (req, res) => {
+  const userId = sanitizeString(req.body.userId);
+  const trackId = sanitizeString(req.body.trackId);
+  const genre = sanitizeString(req.body.genre);
+  if (!userId || !trackId || !genre) {
+    return res.status(400).json({ error: 'Missing userId, trackId, or genre' });
+  }
+  try {
+    await UserTrackGenre.deleteOne({ userId, trackId, genre });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to remove genre' });
+  }
+});
+
+app.get('/fallback-artist-genres', async (req, res) => {
+  let names = req.query.names;
+  console.log('Received names for fallback query:', names);
+  try {
+    names = JSON.parse(names);
+    console.log('Parsed names:', names);
+  } catch (error) {
+    console.error('Invalid names format:', error.message);
+    return res.status(400).json({ error: 'Invalid names format' });
+  }
+  if (!Array.isArray(names) || names.length === 0) {
+    console.log('No valid names provided for fallback query');
+    return res.json([]);
+  }
+  try {
+    const docs = await FallbackArtist.find({
+      name: { $in: names.map(name => new RegExp(`^${name}$`, 'i')) }
+    }).lean();
+    console.log('Fallback query results:', docs);
+    res.json(docs.map(({ name, genre }) => ({ name, genre })));
+  } catch (err) {
+    console.error('Failed to fetch fallback artist genres:', err);
+    res.status(500).json({ error: 'Failed to fetch fallback artist genres' });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
