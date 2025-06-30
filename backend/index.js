@@ -88,12 +88,26 @@ app.get('/callback', async (req, res) => {
 
 
 app.post('/ai/suggest-playlist-name', async (req, res) => {
-  const { genres } = req.body;
+  const { genres, baseName } = req.body;
   if (!genres || !Array.isArray(genres) || genres.length === 0) {
     return res.status(400).json({ error: 'Genres are required' });
   }
+  // Helper to check if baseName is meaningful (not empty, not just whitespace, not generic)
+  function isMeaningful(str) {
+    if (!str) return false;
+    const s = str.trim();
+    if (!s) return false;
+    if (s.length < 3) return false;
+    if (/playlist|mix|songs|music/i.test(s) && s.length < 10) return false;
+    return true;
+  }
   try {
-    const prompt = `Suggest a creative, fun Spotify playlist name for these genres: ${genres.join(', ')}. Only return the name.`;
+    let prompt;
+    if (isMeaningful(baseName)) {
+      prompt = `Given the playlist name "${baseName}" and these genres: ${genres.join(', ')}, suggest ONE improved, creative Spotify playlist name that fits both. ONLY return the name, no extra text, no quotes.`;
+    } else {
+      prompt = `Suggest ONE creative, fun Spotify playlist name for these genres: ${genres.join(', ')}. ONLY return the name, no extra text, no quotes.`;
+    }
     const result = await chat.invoke([new HumanMessage(prompt)]);
     res.json({ suggestion: result.content.trim() });
   } catch (err) {
