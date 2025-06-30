@@ -1,10 +1,18 @@
 import express from 'express';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log('MongoDB connected to', process.env.MONGODB_URI))
+  .catch(err => { console.error('MongoDB connection error:', err); process.exit(1); });
 
 // Spotify OAuth login endpoint
 app.get('/auth/login', (req, res) => {
@@ -80,6 +88,66 @@ app.get('/spotify/artist-genres', async (req, res) => {
     res.status(error.response?.status || 500).json({ error: 'Failed to fetch artist genres' });
   }
 });
+function sanitizeString(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/[^\w\s\-']/gi, '').trim();
+}
+
+const UserTrackGenreSchema = new mongoose.Schema({
+  userId: String,
+  trackId: String,
+  genre: String
+}, { collection: 'user_track_genres' });
+
+const UserTrackGenre = mongoose.models.UserTrackGenre || mongoose.model('UserTrackGenre', UserTrackGenreSchema);
+
+app.post('/user/track-genres', async (req, res) => {
+  const userId = sanitizeString(req.body.userId);
+  const trackId = sanitizeString(req.body.trackId);
+  const genre = sanitizeString(req.body.genre);
+  if (!userId || !trackId || !genre) {
+    return res.status(400).json({ error: 'Missing userId, trackId, or genre' });
+  }
+  if (genre.length > 40) return res.status(400).json({ error: 'Genre too long' });
+  try {
+    await UserTrackGenre.findOneAndUpdate({ userId, trackId, genre }, {}, { upsert: true });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to add genre:', err);
+    res.status(500).json({ error: 'Failed to add genre', details: err.message });
+  }
+});
+
+app.post('/spotify/create-playlist', async (req, res) => {
+  const { access_token, name, trackUris } = req.body;
+  try {
+    const userResponse = await axios.get('https://api.spotify.com/v1/me', {
+      headers: { 'Authorization': `Bearer ${access_token}` }
+    });
+    const userId = userResponse.data.id;
+
+    const playlistResponse = await axios.post(`https://api.spotify.com/v1/users/${userId}/playlists`, {
+      name: name,
+      public: true
+    }, {
+      headers: { 'Authorization': `Bearer ${access_token}` }
+    });
+
+    const playlistId = playlistResponse.data.id;
+    await axios.post(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+      uris: trackUris
+    }, {
+      headers: { 'Authorization': `Bearer ${access_token}` }
+    });
+
+    res.json({ playlistUrl: playlistResponse.data.external_urls.spotify });
+  } catch (error) {
+    console.error('Create playlist error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to create playlist' });
+  }
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
