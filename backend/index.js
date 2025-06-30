@@ -8,10 +8,7 @@ const app = express();
 app.use(express.json());
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected to', process.env.MONGODB_URI))
+mongoose.connect(process.env.MONGODB_URI).then(() => console.log('Connected to MongoDB'))
   .catch(err => { console.error('MongoDB connection error:', err); process.exit(1); });
 
 // Spotify OAuth login endpoint
@@ -115,6 +112,20 @@ app.post('/user/track-genres', async (req, res) => {
   } catch (err) {
     console.error('Failed to add genre:', err);
     res.status(500).json({ error: 'Failed to add genre', details: err.message });
+  }
+});
+
+app.get('/user/track-genres', async (req, res) => {
+  const userId = sanitizeString(req.query.userId);
+  const trackId = sanitizeString(req.query.trackId);
+  if (!userId || !trackId) {
+    return res.status(400).json({ error: 'Missing userId or trackId' });
+  }
+  try {
+    const genres = await UserTrackGenre.find({ userId, trackId });
+    res.json({ genres: genres.map(g => g.genre) });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get genres' });
   }
 });
 
