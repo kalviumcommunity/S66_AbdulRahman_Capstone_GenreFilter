@@ -5,7 +5,7 @@ import querystring from 'querystring';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import helmet from 'helmet';
-import { ChatCohere } from "@langchain/cohere";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { HumanMessage } from "@langchain/core/messages";
 
 dotenv.config();
@@ -27,12 +27,12 @@ const {
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected to', MONGODB_URI))
+}).then(() => console.log('MongoDB connected successfully'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-const chat = new ChatCohere({
-  apiKey: process.env.COHERE_API_KEY,
-  model: "command", // or "command-r" for more creative results
+const chat = new ChatGoogleGenerativeAI({
+  apiKey: process.env.GOOGLE_API_KEY,
+  model: "gemini-1.5-flash",
   temperature: 0.8,
 });
 

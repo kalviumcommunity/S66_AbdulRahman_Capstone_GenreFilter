@@ -122,6 +122,8 @@ class ErrorBoundary extends React.Component {
 
 Modal.setAppElement('#root'); // Ensure modal accessibility
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001';
+
 function App() {
   const [accessToken, setAccessToken] = useState(null);
   const [spotifyUserId, setSpotifyUserId] = useState(null);
@@ -156,7 +158,7 @@ function App() {
     if (accessToken && !spotifyUserId) {
       axios.get('https://api.spotify.com/v1/me', {
         headers: { Authorization: `Bearer ${accessToken}` }
-      }).then(res => setSpotifyUserId(res.data.id)).catch(() => {});
+      }).then(res => setSpotifyUserId(res.data.id)).catch(() => { });
     }
   }, [accessToken, spotifyUserId]);
 
@@ -173,7 +175,7 @@ function App() {
 
     try {
       console.log('Attempting to refresh access token');
-      const response = await axios.post('http://localhost:5000/refresh_token', { refresh_token: storedRefreshToken });
+      const response = await axios.post(`${API_BASE_URL}/refresh_token`, { refresh_token: storedRefreshToken });
       const { access_token, refresh_token, expires_in } = response.data;
       setAccessToken(access_token);
       localStorage.setItem('spotify_access_token', access_token);
@@ -214,11 +216,11 @@ function App() {
 
     const fetchUserPlaylists = async (token) => {
       return fetchWithTokenRefresh(async () => {
-        const res = await axios.get(`http://localhost:5000/spotify/user-playlists?access_token=${token}`);
+        const res = await axios.get(`${API_BASE_URL}/spotify/user-playlists?access_token=${token}`);
         setPlaylists(res.data);
         setError(null);
         return res;
-      }, `http://localhost:5000/spotify/user-playlists?access_token=${token}`);
+      }, `${API_BASE_URL}/spotify/user-playlists?access_token=${token}`);
     };
 
     if (token && refresh) {
@@ -237,7 +239,7 @@ function App() {
   }, [fetchWithTokenRefresh]);
 
   const handleLogin = () => {
-    window.location.href = 'http://localhost:5000/auth/login';
+    window.location.href = `${API_BASE_URL}/auth/login`;
   };
 
   const fetchArtistGenresInBatches = async (artistIds) => {
@@ -251,10 +253,10 @@ function App() {
       batches.push(
         fetchWithTokenRefresh(
           async () => {
-            const res = await axios.get(`http://localhost:5000/spotify/artist-genres?${queryParams}`);
+            const res = await axios.get(`${API_BASE_URL}/spotify/artist-genres?${queryParams}`);
             return res.data;
           },
-          `http://localhost:5000/spotify/artist-genres?${queryParams}`
+          `${API_BASE_URL}/spotify/artist-genres?${queryParams}`
         ).catch(err => {
           console.error(`Artist genre batch ${i / 25 + 1} failed:`, err.response?.data || err.message);
           return [];
@@ -272,10 +274,10 @@ function App() {
     });
     return fetchWithTokenRefresh(
       async () => {
-        const res = await axios.get(`http://localhost:5000/spotify/artist-genres-lastfm?${queryParams}`);
+        const res = await axios.get(`${API_BASE_URL}/spotify/artist-genres-lastfm?${queryParams}`);
         return res.data;
       },
-      `http://localhost:5000/spotify/artist-genres-lastfm?${queryParams}`
+      `${API_BASE_URL}/spotify/artist-genres-lastfm?${queryParams}`
     ).catch(err => {
       console.error('Last.fm genre fetch failed:', err.response?.data || err.message);
       return [];
@@ -297,8 +299,8 @@ function App() {
     try {
       setLoadingGenres(true);
       const res = await fetchWithTokenRefresh(
-        async () => await axios.get(`http://localhost:5000/spotify/playlist-tracks?access_token=${accessToken}&playlist_id=${playlistId}`),
-        `http://localhost:5000/spotify/playlist-tracks?access_token=${accessToken}&playlist_id=${playlistId}`
+        async () => await axios.get(`${API_BASE_URL}/spotify/playlist-tracks?access_token=${accessToken}&playlist_id=${playlistId}`),
+        `${API_BASE_URL}/spotify/playlist-tracks?access_token=${accessToken}&playlist_id=${playlistId}`
       );
       const songs = res.data;
 
@@ -359,7 +361,7 @@ function App() {
         const uniqueNames = [...new Set(Object.values(artistIdToName))];
         if (uniqueNames.length > 0) {
           try {
-            const response = await axios.get('http://localhost:5000/fallback-artist-genres', {
+            const response = await axios.get(`${API_BASE_URL}/fallback-artist-genres`, {
               params: { names: JSON.stringify(uniqueNames) }
             });
             const fallbackData = response.data || [];
@@ -501,14 +503,14 @@ function App() {
     try {
       setError(null);
       const res = await fetchWithTokenRefresh(
-        async () => await axios.post('http://localhost:5000/spotify/create-playlist', {
+        async () => await axios.post(`${API_BASE_URL} /spotify/create - playlist`, {
           access_token: accessToken,
           name: playlistName,
           trackUris
         }),
         null
       );
-      alert(`🎉 Playlist created!\n${res.data.playlistUrl}`);
+      alert(`🎉 Playlist created!\n${res.data.playlistUrl} `);
     } catch {
       setError('Failed to create playlist.');
     }
@@ -520,66 +522,78 @@ function App() {
   }, [genres, showAllGenres]);
 
   const customSelectStyles = {
-    control: provided => ({
+    control: (provided, state) => ({
       ...provided,
-      backgroundColor: '#1F1F1F',
-      borderColor: '#1F1F1F',
+      backgroundColor: '#1a1a1a',
+      borderColor: state.isFocused ? '#1DB954' : '#282828',
       color: '#ffffff',
-      padding: '0.5rem',
-      borderRadius: '0.5rem',
-      boxShadow: 'none',
-      '&:hover': { borderColor: '#1DB954' },
-      '&:focus-within': { borderColor: '#1DB954', boxShadow: '0 0 0 2px #1DB954' }
+      padding: '0.25rem',
+      borderRadius: '0.75rem',
+      boxShadow: state.isFocused ? '0 0 0 1px #1DB954' : 'none',
+      transition: 'all 0.2s ease',
+      '&:hover': { borderColor: '#3a3a3a' }
     }),
     menu: provided => ({
       ...provided,
-      backgroundColor: '#121212',
+      backgroundColor: '#141414',
       color: '#ffffff',
-      borderRadius: '0.5rem',
-      maxHeight: '240px',
-      overflowY: 'auto',
-      scrollbarWidth: 'thin',
-      msOverflowStyle: 'none',
-      '&::-webkit-scrollbar': { width: '6px', background: 'transparent' },
-      '&::-webkit-scrollbar-thumb': { background: '#23272f', borderRadius: '6px' }
+      borderRadius: '0.75rem',
+      border: '1px solid #282828',
+      boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
+      overflow: 'hidden',
+      marginTop: '0.5rem'
     }),
     menuList: provided => ({
       ...provided,
-      padding: 0,
-      maxHeight: '230px',
+      padding: '0.25rem',
+      maxHeight: '200px',
       overflowY: 'auto',
       scrollbarWidth: 'thin',
-      msOverflowStyle: 'none',
-      '&::-webkit-scrollbar': { width: '6px', background: 'transparent' },
-      '&::-webkit-scrollbar-thumb': { background: '#23272f', borderRadius: '6px' }
+      scrollbarColor: '#3a3a3a #141414'
     }),
     option: (provided, state) => ({
       ...provided,
-      backgroundColor: state.isSelected ? '#1DB954' : '#121212',
-      color: state.isSelected ? '#121212' : '#ffffff',
-      '&:hover': { backgroundColor: '#374151' }
+      backgroundColor: state.isSelected ? '#1DB954' : state.isFocused ? '#242424' : 'transparent',
+      color: state.isSelected ? '#0a0a0a' : '#ffffff',
+      borderRadius: '0.5rem',
+      padding: '0.625rem 0.75rem',
+      cursor: 'pointer',
+      transition: 'background-color 0.15s ease'
     }),
     multiValue: provided => ({
       ...provided,
-      backgroundColor: '#374151',
-      color: '#ffffff'
+      backgroundColor: '#1DB95420',
+      border: '1px solid #1DB954',
+      borderRadius: '9999px',
+      padding: '0 0.25rem'
     }),
     multiValueLabel: provided => ({
       ...provided,
-      color: '#ffffff'
+      color: '#1DB954',
+      fontSize: '0.875rem',
+      padding: '0.125rem 0.25rem'
     }),
     multiValueRemove: provided => ({
       ...provided,
-      color: '#ffffff',
-      '&:hover': { backgroundColor: '#1DB954', color: '#121212' }
+      color: '#1DB954',
+      borderRadius: '9999px',
+      '&:hover': { backgroundColor: '#1DB954', color: '#0a0a0a' }
     }),
     placeholder: provided => ({
       ...provided,
-      color: '#9CA3AF'
+      color: '#6a6a6a'
     }),
     input: provided => ({
       ...provided,
       color: '#ffffff'
+    }),
+    singleValue: provided => ({
+      ...provided,
+      color: '#ffffff'
+    }),
+    noOptionsMessage: provided => ({
+      ...provided,
+      color: '#6a6a6a'
     })
   };
 
@@ -589,7 +603,7 @@ function App() {
     setDedupError(null);
     setDedupResult(null);
     try {
-      const res = await axios.post('http://localhost:5000/spotify/deduplicate-playlist', {
+      const res = await axios.post(`${API_BASE_URL} /spotify/deduplicate - playlist`, {
         access_token: accessToken,
         playlist_id: selectedPlaylist
       });
@@ -605,7 +619,7 @@ function App() {
   const fetchUserGenres = async (trackId) => {
     if (!spotifyUserId || !trackId) return [];
     try {
-      const res = await axios.get('http://localhost:5000/user/track-genres', {
+      const res = await axios.get(`${API_BASE_URL} /user/track - genres`, {
         params: { userId: spotifyUserId, trackId }
       });
       return res.data.genres || [];
@@ -640,7 +654,7 @@ function App() {
     setModalError(null);
     setModalSuccess(null);
     try {
-      await axios.post('http://localhost:5000/user/track-genres', {
+      await axios.post(`${API_BASE_URL} /user/track - genres`, {
         userId: spotifyUserId,
         trackId: modalTrack.track.id,
         genre: genreAddValue
@@ -663,7 +677,7 @@ function App() {
     setModalError(null);
     setModalSuccess(null);
     try {
-      await axios.delete('http://localhost:5000/user/track-genres', {
+      await axios.delete(`${API_BASE_URL} /user/track - genres`, {
         data: { userId: spotifyUserId, trackId: modalTrack.track.id, genre }
       });
       const updatedGenres = await fetchUserGenres(modalTrack.track.id);
@@ -696,40 +710,97 @@ function App() {
   }, [filteredSongs]);
 
   return (
-    <div className="min-h-screen bg-dark-bg text-white p-6 md:p-8 scrollbar-thin">
-      <header className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl md:text-4xl font-bold flex items-center">
-          <img src="/WhatsApp_Image_2025-06-27_at_10.41.04_AM-removebg-preview.png" alt="Spopify Logo" className="w-10 h-10 mr-2 rounded-full bg-white" />
-          Spopify
-        </h1>
-      </header>
-
-      {error && (
-        <div className="bg-red-900 bg-opacity-50 p-4 rounded-lg mb-6 text-center">
-          {error}
-        </div>
-      )}
-
+    <div className="min-h-screen bg-base text-primary scrollbar-thin">
+      {/* Login Screen */}
       {!accessToken ? (
-        <button
-          onClick={handleLogin}
-          className="bg-spotify-green text-dark-bg font-semibold py-2 px-6 rounded-full hover:bg-green-500"
-        >
-          Login with Spotify
-        </button>
+        <div className="min-h-screen flex flex-col items-center justify-center p-6">
+          <div className="text-center max-w-md animate-fade-in">
+            {/* Logo and Title */}
+            <div className="mb-8">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-accent/10 flex items-center justify-center overflow-hidden">
+                <img
+                  src="/WhatsApp_Image_2025-06-27_at_10.41.04_AM-removebg-preview.png"
+                  alt="Spopify Logo"
+                  className="w-16 h-16 object-contain"
+                />
+              </div>
+              <h1 className="text-4xl md:text-5xl font-bold mb-3">
+                <span className="text-gradient">Spopify</span>
+              </h1>
+              <p className="text-secondary text-lg">
+                Filter your Spotify playlists by genre
+              </p>
+            </div>
+
+            {/* Features */}
+            <div className="grid grid-cols-3 gap-4 mb-10">
+              <div className="text-center">
+                <div className="w-10 h-10 mx-auto mb-2 rounded-xl bg-surface flex items-center justify-center">
+                  <span className="text-xl">🎵</span>
+                </div>
+                <p className="text-xs text-muted">Filter by Genre</p>
+              </div>
+              <div className="text-center">
+                <div className="w-10 h-10 mx-auto mb-2 rounded-xl bg-surface flex items-center justify-center">
+                  <span className="text-xl">🧹</span>
+                </div>
+                <p className="text-xs text-muted">Remove Duplicates</p>
+              </div>
+              <div className="text-center">
+                <div className="w-10 h-10 mx-auto mb-2 rounded-xl bg-surface flex items-center justify-center">
+                  <span className="text-xl">✨</span>
+                </div>
+                <p className="text-xs text-muted">Create Playlists</p>
+              </div>
+            </div>
+
+            {/* Login Button */}
+            <button
+              onClick={handleLogin}
+              className="btn-primary text-lg px-12 py-4 rounded-full shadow-glow"
+            >
+              Login with Spotify
+            </button>
+          </div>
+        </div>
       ) : (
-        <div className="max-w-3xl mx-auto">
+        /* Dashboard */
+        <div className="max-w-4xl mx-auto p-6 md:p-8 animate-fade-in">
+          {/* Header */}
+          <header className="flex items-center justify-between mb-10">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center overflow-hidden">
+                <img
+                  src="/WhatsApp_Image_2025-06-27_at_10.41.04_AM-removebg-preview.png"
+                  alt="Spopify Logo"
+                  className="w-8 h-8 object-contain"
+                />
+              </div>
+              <h1 className="text-2xl font-bold text-gradient">Spopify</h1>
+            </div>
+          </header>
+
+          {/* Error Alert */}
+          {error && (
+            <div className="card bg-error-bg border-error mb-6 animate-slide-up">
+              <p className="text-error text-center">{error}</p>
+            </div>
+          )}
+
+          {/* Playlist Selector */}
           {playlists.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-lg font-semibold mb-2">Select a Playlist</h3>
+            <div className="card mb-6">
+              <label className="block text-sm font-medium text-secondary mb-3">
+                Select a Playlist
+              </label>
               <select
                 onChange={handlePlaylistSelect}
                 value={selectedPlaylist}
-                className="w-full bg-dark-surface text-white p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green"
+                className="select"
               >
-                <option value="">-- Choose Playlist --</option>
+                <option value="">Choose a playlist...</option>
                 {playlists.map(p => (
-                  <option key={p.id} value={p.id} className="bg-dark-bg">
+                  <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
@@ -737,22 +808,21 @@ function App() {
             </div>
           )}
 
-          {/* Deduplication Feature: Show only when no playlist is selected */}
-          {!selectedPlaylist && (
-            <div className="mb-8 bg-dark-surface rounded-lg p-6 flex flex-col items-center border border-gray-800 shadow">
+          {/* Deduplication Panel */}
+          {!selectedPlaylist ? (
+            <div className="card text-center mb-6">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface flex items-center justify-center">
+                <span className="text-2xl">🧹</span>
+              </div>
               <h3 className="text-lg font-semibold mb-2">Deduplicate Playlist</h3>
-              <p className="text-gray-400 mb-4 text-center">Select a playlist to enable deduplication. This feature will help you find and remove duplicate songs from your playlist.</p>
-              <button
-                className="bg-gray-700 text-white py-2 px-6 rounded-full font-semibold opacity-60 cursor-not-allowed"
-                disabled
-              >
+              <p className="text-secondary text-sm mb-4 max-w-sm mx-auto">
+                Select a playlist above to find and remove duplicate songs.
+              </p>
+              <button className="btn-secondary opacity-50 cursor-not-allowed" disabled>
                 Deduplicate
               </button>
             </div>
-          )}
-
-          {/* Deduplication Feature: Show when a playlist is selected */}
-          {selectedPlaylist && (
+          ) : (
             <DedupBar
               dedupLoading={dedupLoading}
               dedupError={dedupError}
@@ -761,13 +831,15 @@ function App() {
             />
           )}
 
+          {/* Loading Genres */}
           {loadingGenres && (
-            <div className="flex items-center justify-center mb-6">
-              <ClipLoader color="#1DB954" size={30} />
-              <p className="ml-3 text-gray-400">Loading genres for {trackCount} tracks...</p>
+            <div className="card flex items-center justify-center gap-3 mb-6">
+              <ClipLoader color="#1DB954" size={24} />
+              <p className="text-secondary">Loading genres for {trackCount} tracks...</p>
             </div>
           )}
 
+          {/* Genre Filter */}
           {genres.length > 0 && !loadingGenres && (
             <GenreSelectBar
               genres={genres}
@@ -781,39 +853,72 @@ function App() {
             />
           )}
 
+          {/* Loading Filter */}
           {loadingFilter && (
-            <div className="flex items-center justify-center mb-6">
-              <ClipLoader color="#1DB954" size={30} />
-              <p className="ml-3 text-gray-400">Loading filtered songs...</p>
+            <div className="card flex items-center justify-center gap-3 mb-6">
+              <ClipLoader color="#1DB954" size={24} />
+              <p className="text-secondary">Filtering songs...</p>
             </div>
           )}
 
+          {/* Filtered Songs */}
           {filteredSongs.length > 0 && !loadingFilter && (
-            <div>
-              <h3 className="text-lg font-semibold mb-4">
-                Songs in {selectedGenres.length ? selectedGenres.join(', ') : 'Selected Genres'} ({filteredSongs.length})
-              </h3>
+            <div className="card mb-6 animate-slide-up">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">
+                  {selectedGenres.length ? selectedGenres.join(', ') : 'Selected Genres'}
+                </h3>
+                <span className="tag tag-accent">{filteredSongs.length} songs</span>
+              </div>
+
               <ErrorBoundary>
-                <ul>
+                <ul className="space-y-1 max-h-96 overflow-y-auto scrollbar-thin -mx-2 px-2">
                   {filteredSongs.map((item, idx) => (
-                    <SongRow key={item.track.id || idx} index={idx} />
+                    <li
+                      key={item.track?.id || idx}
+                      className="song-row"
+                      onClick={() => openGenreModal(item)}
+                    >
+                      {/* Track Number */}
+                      <span className="w-6 text-center text-muted text-sm">{idx + 1}</span>
+
+                      {/* Track Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{item.track?.name || 'Unknown Track'}</p>
+                        <p className="text-sm text-secondary truncate">
+                          {item.track?.artists?.map(a => a.name).join(', ') || 'Unknown Artist'}
+                        </p>
+                      </div>
+
+                      {/* Genres */}
+                      <div className="hidden sm:flex gap-1">
+                        {item.genres?.slice(0, 2).map((g, i) => (
+                          <span key={i} className="tag tag-default text-xs">{g}</span>
+                        ))}
+                        {item.genres?.length > 2 && (
+                          <span className="tag tag-default text-xs">+{item.genres.length - 2}</span>
+                        )}
+                      </div>
+                    </li>
                   ))}
                 </ul>
               </ErrorBoundary>
-              <div className="flex items-center gap-2 mt-4">
+
+              {/* Create Playlist Section */}
+              <div className="flex flex-col sm:flex-row gap-3 mt-6 pt-6 border-t border-border">
                 <input
                   type="text"
                   value={customPlaylistName}
                   onChange={e => setCustomPlaylistName(e.target.value)}
                   placeholder="Enter playlist name..."
-                  className="bg-dark-bg text-white rounded px-3 py-2 flex-1"
-                  style={{ minWidth: 200 }}
+                  className="input flex-1"
                 />
                 <button
                   onClick={createPlaylist}
-                  className="bg-spotify-green text-dark-bg font-semibold py-2 px-6 rounded-full hover:bg-green-500"
+                  className="btn-primary whitespace-nowrap"
                 >
-                  ➕ Create Playlist
+                  <span className="mr-2">✨</span>
+                  Create Playlist
                 </button>
               </div>
             </div>
@@ -821,7 +926,7 @@ function App() {
         </div>
       )}
 
-      {/* Modal UI at the end */}
+      {/* Genre Modal */}
       <Modal
         isOpen={genreModalOpen}
         onRequestClose={() => {
@@ -829,83 +934,107 @@ function App() {
           setModalError(null);
           setModalSuccess(null);
         }}
-        className="fixed inset-0 flex items-center justify-center z-50"
-        overlayClassName="fixed inset-0 bg-black bg-opacity-60 z-40"
+        className="modal-content"
+        overlayClassName="modal-overlay"
         ariaHideApp={false}
       >
-        <div className="bg-dark-surface rounded-lg p-6 w-full max-w-md shadow-lg relative">
-          <button
-            className="absolute top-2 right-2 text-gray-400 hover:text-white"
-            onClick={() => {
-              setGenreModalOpen(false);
-              setModalError(null);
-              setModalSuccess(null);
-            }}
-          >
-            ×
-          </button>
-          <h2 className="text-xl font-bold mb-4">Track Genres</h2>
-          {modalTrack ? (
-            <>
-              <div className="mb-2 font-semibold">
-                {modalTrack.track.name} <span className="text-gray-400">by {modalTrack.track.artists.map(a => a.name).join(', ')}</span>
+        <button
+          className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-surface flex items-center justify-center text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+          onClick={() => {
+            setGenreModalOpen(false);
+            setModalError(null);
+            setModalSuccess(null);
+          }}
+        >
+          ×
+        </button>
+
+        <h2 className="text-xl font-bold mb-4">Track Genres</h2>
+
+        {modalTrack ? (
+          <>
+            {/* Track Info */}
+            <div className="mb-6 pb-4 border-b border-border">
+              <p className="font-semibold text-lg">{modalTrack.track?.name}</p>
+              <p className="text-secondary">
+                {modalTrack.track?.artists?.map(a => a.name).join(', ')}
+              </p>
+            </div>
+
+            {/* Auto-detected Genres */}
+            <div className="mb-4">
+              <p className="text-sm text-muted mb-2">Auto-detected genres</p>
+              <div className="flex flex-wrap gap-2">
+                {modalTrackGenres.length > 0 ? (
+                  modalTrackGenres.map((g, i) => (
+                    <span key={g + i} className="tag tag-default">{g}</span>
+                  ))
+                ) : (
+                  <span className="text-muted text-sm">No genres detected</span>
+                )}
               </div>
-              <div className="mb-4">
-                <div className="mb-1 text-sm text-gray-400">Auto-detected genres:</div>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {modalTrackGenres.map((g, i) => (
-                    <span key={g + i} className="bg-gray-700 px-2 py-1 rounded text-xs">{g}</span>
-                  ))}
-                </div>
-                <div className="mb-1 text-sm text-gray-400">Your genres:</div>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {genreModalLoading ? (
-                    <span className="text-gray-400">Loading...</span>
-                  ) : modalUserGenres.length === 0 ? (
-                    <span className="text-gray-500">None</span>
-                  ) : (
-                    modalUserGenres.map(g => (
-                      <span key={g} className="bg-spotify-green text-dark-bg px-2 py-1 rounded text-xs flex items-center">
-                        {g}
-                        <button
-                          className="ml-1 text-xs text-red-500 hover:text-red-700"
-                          onClick={() => handleRemoveUserGenre(g)}
-                          title="Remove genre"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))
-                  )}
-                </div>
-                {modalError && <div className="text-red-400 text-sm mb-2">{modalError}</div>}
-                {modalSuccess && <div className="text-green-400 text-sm mb-2">{modalSuccess}</div>}
-                <div className="flex items-center gap-2 mt-2">
-                  <select
-                    value={genreAddValue}
-                    onChange={e => setGenreAddValue(e.target.value)}
-                    className="bg-dark-bg text-white rounded px-2 py-1"
-                    disabled={genreModalLoading}
-                  >
-                    <option value="">+ Add genre</option>
-                    {MAIN_GENRES.filter(g => !modalUserGenres.includes(g)).map(g => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleAddUserGenre}
-                    className="bg-spotify-green text-dark-bg px-3 py-1 rounded hover:bg-green-500"
-                    disabled={genreModalLoading || !genreAddValue}
-                  >
-                    {genreModalLoading ? <ClipLoader color="#121212" size={12} /> : '+'}
-                  </button>
-                </div>
+            </div>
+
+            {/* User Genres */}
+            <div className="mb-4">
+              <p className="text-sm text-muted mb-2">Your custom genres</p>
+              <div className="flex flex-wrap gap-2">
+                {genreModalLoading ? (
+                  <ClipLoader color="#1DB954" size={16} />
+                ) : modalUserGenres.length === 0 ? (
+                  <span className="text-muted text-sm">None added yet</span>
+                ) : (
+                  modalUserGenres.map(g => (
+                    <span key={g} className="tag tag-accent group">
+                      {g}
+                      <button
+                        className="ml-1.5 opacity-60 hover:opacity-100 transition-opacity"
+                        onClick={() => handleRemoveUserGenre(g)}
+                        title="Remove genre"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                )}
               </div>
-            </>
-          ) : (
-            <div className="text-gray-400">Loading track details...</div>
-          )}
-        </div>
+            </div>
+
+            {/* Feedback Messages */}
+            {modalError && (
+              <div className="tag tag-error mb-4">{modalError}</div>
+            )}
+            {modalSuccess && (
+              <div className="tag tag-success mb-4">{modalSuccess}</div>
+            )}
+
+            {/* Add Genre */}
+            <div className="flex gap-2 pt-4 border-t border-border">
+              <select
+                value={genreAddValue}
+                onChange={e => setGenreAddValue(e.target.value)}
+                className="select flex-1"
+                disabled={genreModalLoading}
+              >
+                <option value="">Add a genre...</option>
+                {MAIN_GENRES.filter(g => !modalUserGenres.includes(g)).map(g => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleAddUserGenre}
+                className="btn-primary px-4"
+                disabled={genreModalLoading || !genreAddValue}
+              >
+                {genreModalLoading ? <ClipLoader color="#0a0a0a" size={16} /> : '+'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-center py-8">
+            <ClipLoader color="#1DB954" size={24} />
+          </div>
+        )}
       </Modal>
     </div>
   );
